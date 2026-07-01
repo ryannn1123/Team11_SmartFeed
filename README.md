@@ -1,16 +1,26 @@
-# smartfeed_app
+# SmartFeed 🐾
 
-A new Flutter project.
+SmartFeed is a Flutter-based smart pet feeding system designed to help pet owners monitor and manage their pets' feeding schedules. The application integrates IoT technology and provides a user-friendly interface for controlling and monitoring the feeder.
 
-## Getting Started
+## Features
 
-This project is a starting point for a Flutter application.
+* 🐶 User Authentication
+* 🐱 Pet Feeding Schedule
+* 📷 Camera Monitoring
+* 🤖 AI Pet Assistant (Groq API)
+* 📊 Feeding History
+* 📢 Notifications
+* ☁️ Supabase Database Integration
 
-A few resources to get you started if this is your first Flutter project:
+## Technologies Used
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+* Flutter
+* Dart
+* Supabase
+* Groq API
+* ESP32
+* Git & GitHub
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Developer
+
+* Ryan Lequin
