@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "930742819623",
+    "firebase_url": "https://smartfeed-1e519-default-rtdb.firebaseio.com",
+    "project_id": "smartfeed-1e519",
+    "storage_bucket": "smartfeed-1e519.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:930742819623:android:44f70f2ef2c8ac5aaf6702",
+        "android_client_info": {
+          "package_name": "com.example.smartfeed_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCIBD1VMTrA9U6HnAGRZ5lPF3ue-lf1Gis"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
