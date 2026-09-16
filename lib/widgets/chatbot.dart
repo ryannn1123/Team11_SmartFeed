@@ -6,13 +6,14 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 final String _groqKey = dotenv.env['GROQ_API_KEY']!;
 const _groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
-const _groqModel = 'llama-3.3-70b-versatile';
-
+const _groqModel = 'openai/gpt-oss-20b';
 const _systemPrompt =
-    'You are PetBot, a warm, friendly pet assistant for SmartFeed. '
-    'Be emotional, caring, and simple. Use emojis like 🐾 🐶 🐱. '
-    'Give short helpful answers. Always suggest vet for serious issues.';
 
+    'You are PetBot, an AI assistant for the SmartFeed pet feeding system. Only answer questions related to pets, pet care, feeding, SmartFeed, and the features of this application. If the user asks about unrelated topics such as programming, mathematics, general knowledge, or other subjects, politely explain that you can only help with pet and SmartFeed-related questions.'
+    'Give short helpful answers. Always suggest vet for serious issues.'
+    'Be emotional, caring, and simple. '
+    'Be friendly pet assistant for SmartFeed.';
+   
 class ChatMessage {
   final String text;
   final bool isUser;
@@ -37,6 +38,11 @@ class _FloatingChatbotState extends State<FloatingChatbot>
 
   late AnimationController _anim;
   late Animation<double> _scale;
+
+  // Custom Palette Hexes from provided image
+  static const Color _coralPink = Color(0xFFFF8C7A);
+  static const Color _softPeach = Color(0xFFFFB399);
+  static const Color _creamLight = Color(0xFFFFF5CC);
 
   @override
   void initState() {
@@ -69,67 +75,96 @@ class _FloatingChatbotState extends State<FloatingChatbot>
   }
 
   Future<void> _send() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty || _loading) return;
+  final text = _controller.text.trim();
+  if (text.isEmpty || _loading) return;
 
-    setState(() {
-      _messages.add(ChatMessage(text: text, isUser: true));
-      _loading = true;
-      _controller.clear();
-    });
+  setState(() {
+    _messages.add(ChatMessage(text: text, isUser: true));
+    _loading = true;
+    _controller.clear();
+  });
 
-    _scrollToBottom();
+  _scrollToBottom();
 
-    try {
-      final msgs = [
-        {'role': 'system', 'content': _systemPrompt},
-        ..._messages.map((m) => {
-              'role': m.isUser ? 'user' : 'assistant',
-              'content': m.text,
-            })
-      ];
+  try {
+    final msgs = [
+      {'role': 'system', 'content': _systemPrompt},
+      ..._messages.map((m) => {
+            'role': m.isUser ? 'user' : 'assistant',
+            'content': m.text,
+          })
+    ];
 
-      final res = await http.post(
-        Uri.parse(_groqUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $_groqKey',
-        },
-        body: jsonEncode({
-          'model': _groqModel,
-          'messages': msgs,
-          'temperature': 0.7,
-        }),
-      );
+    final res = await http.post(
+      Uri.parse(_groqUrl),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_groqKey',
+      },
+      body: jsonEncode({
+        'model': _groqModel,
+        'messages': msgs,
+        'temperature': 0.7,
+      }),
+    );
 
-      final data = jsonDecode(res.body);
-      final reply = data['choices'][0]['message']['content'];
+    final data = jsonDecode(res.body);
+
+    // Check if Groq returned an error
+    if (res.statusCode != 200) {
+      final errorMessage =
+          data['error']?['message'] ?? 'Unknown Groq API error';
 
       setState(() {
-        _messages.add(ChatMessage(text: reply, isUser: false));
+        _messages.add(
+          ChatMessage(
+            text: "Sorry 🐾 I couldn't respond right now.\n\n$errorMessage",
+            isUser: false,
+          ),
+        );
       });
-    } catch (e) {
-      setState(() {
-        _messages.add(ChatMessage(text: "Oops 🐾 $e", isUser: false));
-      });
+
+      return;
     }
 
+    // Get the AI response
+    final reply = data['choices']?[0]?['message']?['content'];
+
+    if (reply == null || reply.toString().trim().isEmpty) {
+      setState(() {
+        _messages.add(
+          ChatMessage(
+            text: "Sorry 🐾 I didn't receive a response from PetBot.",
+            isUser: false,
+          ),
+        );
+      });
+
+      return;
+    }
+
+    setState(() {
+      _messages.add(
+        ChatMessage(
+          text: reply.toString(),
+          isUser: false,
+        ),
+      );
+    });
+  } catch (e) {
+    setState(() {
+      _messages.add(
+        ChatMessage(
+          text: "Oops 🐾 Something went wrong. Please try again.",
+          isUser: false,
+        ),
+      );
+    });
+  } finally {
     setState(() => _loading = false);
     _scrollToBottom();
   }
-
-  void _scrollToBottom() {
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (_scroll.hasClients) {
-        _scroll.animateTo(
-          _scroll.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
-  }
-
+}
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -145,14 +180,14 @@ class _FloatingChatbotState extends State<FloatingChatbot>
               margin: const EdgeInsets.only(bottom: 75, right: 10),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFFFFF1F6), Color(0xFFEAF6FF)],
+                  colors: [_creamLight, Color(0xFFFFFDF9)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(24),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.15),
+                    color: Colors.black.withOpacity(0.12),
                     blurRadius: 25,
                   )
                 ],
@@ -164,7 +199,7 @@ class _FloatingChatbotState extends State<FloatingChatbot>
                     padding: const EdgeInsets.all(12),
                     decoration: const BoxDecoration(
                       gradient: LinearGradient(
-                        colors: [Color(0xFFFFA6C1), Color(0xFF9AD0FF)],
+                        colors: [_coralPink, _softPeach],
                       ),
                       borderRadius:
                           BorderRadius.vertical(top: Radius.circular(24)),
@@ -198,7 +233,7 @@ class _FloatingChatbotState extends State<FloatingChatbot>
                       itemCount: _messages.length + (_loading ? 1 : 0),
                       itemBuilder: (_, i) {
                         if (i == _messages.length) {
-                          return const _Typing();
+                          return const _Typing(dotColor: _coralPink);
                         }
 
                         final m = _messages[i];
@@ -213,7 +248,7 @@ class _FloatingChatbotState extends State<FloatingChatbot>
                                 const BoxConstraints(maxWidth: 240),
                             decoration: BoxDecoration(
                               color: m.isUser
-                                  ? const Color(0xFFFFA6C1)
+                                  ? _coralPink
                                   : Colors.white,
                               borderRadius: BorderRadius.circular(16),
                             ),
@@ -255,7 +290,7 @@ class _FloatingChatbotState extends State<FloatingChatbot>
                           child: Container(
                             padding: const EdgeInsets.all(10),
                             decoration: const BoxDecoration(
-                              color: Color(0xFFFFA6C1),
+                              color: _coralPink,
                               shape: BoxShape.circle,
                             ),
                             child: const Icon(Icons.pets, color: Colors.white),
@@ -272,16 +307,20 @@ class _FloatingChatbotState extends State<FloatingChatbot>
         // 🐾 Floating Paw Button
         FloatingActionButton(
           onPressed: _toggle,
-          backgroundColor: const Color(0xFFFFA6C1),
+          backgroundColor: _coralPink,
+          foregroundColor: Colors.white,
           child: Icon(_open ? Icons.close : Icons.pets),
         ),
       ],
     );
   }
+
+  void _scrollToBottom() {}
 }
 
 class _Typing extends StatefulWidget {
-  const _Typing();
+  final Color dotColor;
+  const _Typing({this.dotColor = const Color(0xFFFF8C7A)});
 
   @override
   State<_Typing> createState() => _TypingState();
@@ -318,8 +357,8 @@ class _TypingState extends State<_Typing>
               margin: const EdgeInsets.all(2),
               width: 6,
               height: 6 + (v * 6),
-              decoration: const BoxDecoration(
-                color: Color(0xFFFFA6C1),
+              decoration: BoxDecoration(
+                color: widget.dotColor,
                 shape: BoxShape.circle,
               ),
             );

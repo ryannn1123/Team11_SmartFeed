@@ -26,6 +26,18 @@ class _HomePageState extends State<HomePage> {
     PetRegistrationPage(),
   ];
 
+  static const Color _coralPink = Color(0xFFFF9E89);
+  static const Color _warmSand  = Color(0xFFFFD8A0);
+  static const Color _inactive  = Color(0xFF8A92A3);
+
+  final List<Map<String, dynamic>> _navItems = const [
+    {'icon': Icons.tune_rounded, 'label': 'Control'},
+    {'icon': Icons.schedule_rounded, 'label': 'Schedule'},
+    {'icon': Icons.history_rounded, 'label': 'History'},
+    {'icon': Icons.health_and_safety_rounded, 'label': 'Vet'},
+    {'icon': Icons.pets_rounded, 'label': 'Pets'},
+  ];
+
   Future<void> _signOut() async {
     await supabase.auth.signOut();
     if (!mounted) return;
@@ -44,7 +56,7 @@ class _HomePageState extends State<HomePage> {
       extendBody: true,
       backgroundColor: const Color(0xFFFFFDF9),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFFF9E89),
+        backgroundColor: _coralPink,
         elevation: 0,
         centerTitle: false,
         titleSpacing: 18,
@@ -63,7 +75,7 @@ class _HomePageState extends State<HomePage> {
                 borderRadius: BorderRadius.circular(14),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFFF9E89).withOpacity(0.28),
+                    color: _coralPink.withOpacity(0.28),
                     blurRadius: 12,
                     offset: const Offset(0, 6),
                   ),
@@ -114,7 +126,7 @@ class _HomePageState extends State<HomePage> {
               padding: const EdgeInsets.only(right: 14),
               child: CircleAvatar(
                 radius: 18,
-                backgroundColor: const Color(0xFFFF9E89),
+                backgroundColor: _coralPink,
                 backgroundImage:
                     userAvatar != null ? NetworkImage(userAvatar) : null,
                 child: userAvatar == null
@@ -175,91 +187,78 @@ class _HomePageState extends State<HomePage> {
           _pages[_currentIndex],
         ],
       ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+
+      // 🌟 REDESIGNED COMPACT FLOATING NAVIGATION BAR
+      bottomNavigationBar: SafeArea(
         child: Container(
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.9),
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: Colors.white),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.08),
-                blurRadius: 26,
-                offset: const Offset(0, 12),
+                blurRadius: 20,
+                offset: const Offset(0, 6),
               ),
             ],
           ),
-          child: NavigationBarTheme(
-            data: NavigationBarThemeData(
-              height: 64,
-              backgroundColor: Colors.transparent,
-              indicatorColor: const Color(0xFFFFD8A0),
-              labelTextStyle: MaterialStateProperty.resolveWith((states) {
-                final selected = states.contains(MaterialState.selected);
-                return TextStyle(
-                  fontSize: 12,
-                  fontWeight:
-                      selected ? FontWeight.w800 : FontWeight.w600,
-                  color: selected
-                      ? const Color(0xFFFF9E89)
-                      : const Color(0xFF8A92A3),
-                );
-              }),
-              iconTheme: MaterialStateProperty.resolveWith((states) {
-                final selected = states.contains(MaterialState.selected);
-                return IconThemeData(
-                  size: 23,
-                  color: selected
-                      ? const Color(0xFFFF9E89)
-                      : const Color(0xFF8A92A3),
-                );
-              }),
-            ),
-            child: NavigationBar(
-              elevation: 0,
-              selectedIndex: _currentIndex,
-              onDestinationSelected: (index) {
-                setState(() => _currentIndex = index);
-              },
-              destinations: const [
-                NavigationDestination(
-                  selectedIcon: Icon(Icons.tune_rounded),
-                  icon: Icon(Icons.tune_rounded),
-                  label: 'Control',
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: List.generate(_navItems.length, (index) {
+              final isSelected = _currentIndex == index;
+              final item = _navItems[index];
+
+              return GestureDetector(
+                onTap: () {
+                  setState(() => _currentIndex = index);
+                },
+                behavior: HitTestBehavior.opaque,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? _warmSand.withOpacity(0.55)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        item['icon'] as IconData,
+                        size: 22,
+                        color: isSelected ? _coralPink : _inactive,
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        item['label'] as String,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight:
+                              isSelected ? FontWeight.w800 : FontWeight.w600,
+                          color: isSelected ? _coralPink : _inactive,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                NavigationDestination(
-                  selectedIcon: Icon(Icons.schedule_rounded),
-                  icon: Icon(Icons.schedule_outlined),
-                  label: 'Schedule',
-                ),
-                NavigationDestination(
-                  selectedIcon: Icon(Icons.history_rounded),
-                  icon: Icon(Icons.history_outlined),
-                  label: 'History',
-                ),
-                NavigationDestination(
-                  selectedIcon: Icon(Icons.health_and_safety_rounded),
-                  icon: Icon(Icons.local_hospital_outlined),
-                  label: 'Vet',
-                ),
-                NavigationDestination(
-                  selectedIcon: Icon(Icons.pets_rounded),
-                  icon: Icon(Icons.pets_outlined),
-                  label: 'Pets',
-                ),
-              ],
-            ),
+              );
+            }),
           ),
         ),
       ),
-      floatingActionButton: _currentIndex == 1
-          ? null
-          : const Padding(
-              padding: EdgeInsets.only(bottom: 28),
-              child: FloatingChatbot(),
-            ),
+
+      // PetBot now floats here on every tab, including Schedule —
+      // "Add feeding time" moved to the top of SchedulePage, so this
+      // spot no longer needs to be reserved for it.
+      floatingActionButton: const Padding(
+        padding: EdgeInsets.only(bottom: 20),
+        child: FloatingChatbot(),
+      ),
     );
   }
 }

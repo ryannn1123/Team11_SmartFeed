@@ -1,5 +1,11 @@
-import 'dart:math';
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
+import 'package:mjpeg_view/mjpeg_view.dart';
+
 import '../main.dart';
 
 class ServoPage extends StatefulWidget {
@@ -9,382 +15,928 @@ class ServoPage extends StatefulWidget {
   State<ServoPage> createState() => _ServoPageState();
 }
 
-class _ServoPageState extends State<ServoPage> with TickerProviderStateMixin {
-  double _angle = 0;
-  double _displayAngle = 0;
-  String _status = 'Ready';
+class _ServoPageState extends State<ServoPage>
+    with TickerProviderStateMixin {
+  // =========================
+  // FEEDING
+  // =========================
+
+  String _status = 'Select portion & tap Feed Now';
+  bool _isFeeding = false;
+
+  // Selected servo angle
+// Selected feeding portion
+String _selectedPortion = 'medium';
+  // =========================
+  // PET DETECTION
+  // =========================
+
+  String _petDetection = 'No Pet Detected';
+  double _petConfidence = 0.0;
+
+  Timer? _detectionTimer;
+
+  // =========================
+  // ANIMATION
+  // =========================
 
   late AnimationController _pawController;
   late Animation<double> _pawAnimation;
 
-  final List<Map<String, dynamic>> _presets = [
-    {'label': '🐾 Nap', 'angle': 0, 'icon': Icons.bedtime},
-    {'label': '🐕 45°', 'angle': 45, 'icon': Icons.pets},
-    {'label': '🎾 Half', 'angle': 90, 'icon': Icons.circle},
-    {'label': '🐩 120°', 'angle': 120, 'icon': Icons.face_4},
-    {'label': '🐕‍🦺 Play', 'angle': 180, 'icon': Icons.celebration},
-  ];
+  // Purely decorative pulse for the "live" indicators — UI only.
+  late AnimationController _pulseController;
+
+  // =========================
+  // PALETTE (matches SmartFeed's established pet-warm theme)
+  // =========================
+
+  static const Color _salmon = Color(0xFFFA7268);
+  static const Color _peach = Color(0xFFFF9E89);
+  static const Color _blush = Color(0xFFFFD6C4);
+  static const Color _cream = Color(0xFFFFEFC4);
+  static const Color _brown = Color(0xFF5B3A29);
+  static const Color _brownSoft = Color(0xFF7A3E2A);
+  static const Color _leafGreen = Color(0xFF6FAE7C);
+  static const Color _amber = Color(0xFFE0A438);
+
+  // =========================
+  // INIT
+  // =========================
 
   @override
   void initState() {
     super.initState();
-    _fetchCurrentAngle();
 
     _pawController = AnimationController(
       duration: const Duration(milliseconds: 600),
       vsync: this,
     );
-    _pawAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _pawController, curve: Curves.easeOutBack),
+
+    _pawAnimation = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(
+      CurvedAnimation(
+        parent: _pawController,
+        curve: Curves.easeOutBack,
+      ),
+    );
+
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1400),
+      vsync: this,
+    )..repeat(reverse: true);
+
+    // Start checking YOLO detection
+    _startDetectionPolling();
+  }
+
+  // =========================
+  // PET DETECTION POLLING
+  // =========================
+
+  void _startDetectionPolling() {
+    _detectionTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) async {
+        try {
+          final response = await http.get(
+            Uri.parse(
+              'http://192.168.1.7:5000/detection',
+            ),
+          ).timeout(
+            const Duration(seconds: 3),
+          );
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+
+            if (!mounted) return;
+
+            setState(() {
+              _petDetection =
+                  data['pet'] ?? 'No Pet Detected';
+
+              _petConfidence =
+                  (data['confidence'] ?? 0.0).toDouble();
+            });
+          }
+        } catch (e) {
+        }
+      },
     );
   }
 
+  // =========================
+  // PORTION INFORMATION
+  // =========================
+
+  String _getPortionLabel(String portion) {
+  switch (portion) {
+    case 'small':
+      return 'Small';
+    case 'medium':
+      return 'Medium';
+    case 'full':
+      return 'Full';
+    default:
+      return 'Unknown';
+  }
+}
+
+Duration _getFeedingDuration(String portion) {
+  switch (portion) {
+    case 'small':
+      return const Duration(milliseconds: 500);
+
+    case 'medium':
+      return const Duration(seconds: 1);
+
+    case 'full':
+      return const Duration(seconds: 2);
+
+    default:
+      return const Duration(seconds: 1);
+  }
+}
+
+  // =========================
+  // FEED NOW
+  // =========================
+
+  Future<void> feedNow() async {
+  if (_isFeeding) return;
+
+  final String portion = _selectedPortion;
+  final String portionLabel = _getPortionLabel(portion);
+
+  setState(() {
+    _isFeeding = true;
+    _status = "🍖 Dispensing ($portionLabel)...";
+  });
+
+  try {
+    // =================================================
+    // 1. SEND PORTION COMMAND TO ESP32 THROUGH SUPABASE
+    // =================================================
+    //
+    // IMPORTANT:
+    // The physical servo ALWAYS opens to 45°.
+    // The command tells the ESP32 how long to keep it open.
+    //
+
+    await supabase
+        .from('servo')
+        .update({
+      'angle': 45,
+      'command': portion,
+      'last_confirmed': 0,
+    })
+        .eq('id', 27);
+
+    // =================================================
+    // 2. SAVE FEEDING HISTORY
+    // =================================================
+
+    await supabase.from('feeding_logs').insert({
+      'angle': 45,
+      'portion_label': portionLabel,
+      'trigger_type': 'manual',
+      'fed_at': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    // =================================================
+    // 3. PAW ANIMATION
+    // =================================================
+
+    _pawController.forward(from: 0);
+
+    // =================================================
+    // 4. WAIT FOR ESP32 TO FINISH FEEDING
+    // =================================================
+    //
+    // ESP32 is responsible for:
+    // Small  = 0.5 sec
+    // Medium = 1 sec
+    // Full   = 2 sec
+    // then automatically closing the feeder.
+    //
+
+    final feedingDuration = _getFeedingDuration(portion);
+
+    await Future.delayed(
+      feedingDuration + const Duration(milliseconds: 800),
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _status = '✓ Fed successfully! ($portionLabel Portion)';
+    });
+  } catch (e) {
+    if (!mounted) return;
+
+    setState(() {
+      _status = "❌ Error: $e";
+    });
+  } finally {
+    if (!mounted) return;
+
+    setState(() {
+      _isFeeding = false;
+    });
+  }
+}
+
+  // =========================
+  // DISPOSE
+  // =========================
+
   @override
   void dispose() {
+    _detectionTimer?.cancel();
     _pawController.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
-  Future<void> _fetchCurrentAngle() async {
-    try {
-      final res = await supabase
-          .from('servo')
-          .select('angle, last_confirmed')
-          .eq('id', 1)
-          .single();
-
-      setState(() {
-        _angle = (res['angle'] as int).toDouble();
-        _displayAngle = _angle;
-        _status = 'Ready';
-      });
-      _pawController.forward(from: 0);
-    } catch (e) {
-      setState(() => _status = '🐾 Failed to fetch data');
-    }
-  }
-
-  // Helper: convert angle to portion label
-  String _portionLabel(int angle) {
-    if (angle == 0) return 'Closed';
-    if (angle <= 45) return 'Small';
-    if (angle <= 90) return 'Medium';
-    if (angle <= 135) return 'Large';
-    return 'Full';
-  }
-
-  Future<void> _sendAngle() async {
-    final angleInt = _angle.round();
-    try {
-      // Update servo angle
-      await supabase
-          .from('servo')
-          .update({'angle': angleInt})
-          .eq('id', 1);
-
-      // Log feeding to history
-      await supabase.from('feeding_logs').insert({
-        'angle': angleInt,
-        'portion_label': _portionLabel(angleInt),
-        'trigger_type': 'manual',
-        'fed_at': DateTime.now().toUtc().toIso8601String(),
-      });
-
-      setState(() => _status = '✓ Updated $angleInt°');
-      _pawController.forward(from: 0);
-    } catch (e) {
-      setState(() => _status = '❌ Oops: $e');
-    }
-  }
-//ari pud diri
-  void _updateAngle(double val) {
-  setState(() {
-    _angle = val.roundToDouble();
-  });
-}
+  // =========================
+  // BUILD
+  // =========================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFFFF9E89),
-              Color(0xFFFFBFA3),
-              Color(0xFFFFD8A0),
-              Color(0xFFFFEFC4),
-            ],
+      body: Stack(
+        children: [
+          // ---- BACKGROUND ----
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  _peach,
+                  Color(0xFFFFBFA3),
+                  Color(0xFFFFD8A0),
+                  _cream,
+                ],
+              ),
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              children: [
-                // Header with paw animation
-                AnimatedBuilder(
-                  animation: _pawAnimation,
-                  builder: (context, child) {
-                    return Transform.scale(
-                      scale: 1 + _pawAnimation.value * 0.1,
+
+          // ---- DECORATIVE PAW PRINTS ----
+          const Positioned(
+            top: 70,
+            left: -10,
+            child: _GhostPaw(size: 46, angle: -0.4),
+          ),
+          const Positioned(
+            top: 140,
+            right: 6,
+            child: _GhostPaw(size: 30, angle: 0.5),
+          ),
+          const Positioned(
+            bottom: 90,
+            left: 18,
+            child: _GhostPaw(size: 34, angle: 0.2),
+          ),
+          const Positioned(
+            bottom: 30,
+            right: -6,
+            child: _GhostPaw(size: 50, angle: -0.3),
+          ),
+
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(
+                20, 12, 20, 28,
+              ),
+              child: Column(
+                children: [
+
+                  // =========================
+                  // HEADER
+                  // =========================
+
+                  AnimatedBuilder(
+                    animation: _pawAnimation,
+                    builder: (context, child) {
+                      return Transform.scale(
+                        scale:
+                            1 + _pawAnimation.value * 0.1,
+                        child: child,
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 8,
+                        horizontal: 15,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.55),
+                        borderRadius:
+                            BorderRadius.circular(30),
+                        border: Border.all(
+                          color:
+                              Colors.white.withOpacity(0.7),
+                          width: 1.5,
+                        ),
+                      ),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Icon(Icons.pets, size: 28, color: Color(0xFFFA7268)),
-                          SizedBox(width: 8),
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const _PawBadge(),
+                          const SizedBox(width: 10),
                           Text(
                             'Food Controller',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF7A3E2A),
+                            style: GoogleFonts.fraunces(
+                              fontSize: 23,
+                              fontWeight: FontWeight.w700,
+                              color: _brownSoft,
                             ),
                           ),
-                          SizedBox(width: 8),
-                          Icon(Icons.pets, size: 28, color: Color(0xFFFA7268)),
                         ],
                       ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Realtime pet servo control 🐶',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF7A3E2A),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 24),
 
-                // Servo Card
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.65),
-                    borderRadius: BorderRadius.circular(28),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 20,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
+                  const SizedBox(height: 10),
+
+                  Text(
+                    'Realtime pet food controller 🐶',
+                    style: GoogleFonts.dmSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: _brownSoft.withOpacity(0.85),
+                    ),
                   ),
-                  child: Column(
+
+                  const SizedBox(height: 22),
+
+                  // =========================
+                  // CAMERA
+                  // =========================
+
+                  Stack(
                     children: [
-                      TweenAnimationBuilder<double>(
-                        tween: Tween<double>(
-                            begin: _displayAngle, end: _angle),
-                        duration: const Duration(milliseconds: 400),
-                        curve: Curves.easeInOut,
-                        builder: (context, value, child) {
-                          _displayAngle = value;
-                          return SizedBox(
-                            height: 140,
-                            width: double.infinity,
-                            child: CustomPaint(
-                              painter: PetServoPainter(
-                                angle: _displayAngle,
-                                color: const Color(0xFFFA7268),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 16),
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFFD6C4),
-                          borderRadius: BorderRadius.circular(40),
-                        ),
-                        child: Text(
-                          '${_angle.round()}°',
-                          style: const TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF7A3E2A),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 28),
-
-                // Slider
-                SliderTheme(
-                  data: SliderThemeData(
-                    trackHeight: 4,
-                    thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 10),
-                    overlayShape: const RoundSliderOverlayShape(
-                        overlayRadius: 20),
-                    activeTrackColor: const Color(0xFFFA7268),
-                    inactiveTrackColor: const Color(0xFFFFD6C4),
-                    thumbColor: Colors.white,
-                    overlayColor:
-                        const Color(0xFFFA7268).withOpacity(0.2),
-                  ),
-                  //ari diri
-                  child: Slider(
-  value: _angle,
-  min: 0,
-  max: 180,
-  divisions: 180,
-  label: '${_angle.round()}°',
-
-  onChanged: (value) {
-    setState(() {
-      _angle = value.roundToDouble();
-    });
-  },
-
-  onChangeEnd: (value) async {
-    await _sendAngle();
-  },
-)
-                ),
-                const SizedBox(height: 28),
-
-                // Presets
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  alignment: WrapAlignment.center,
-                  children: _presets.map((p) {
-                    final isSelected =
-                        _angle.toInt() == (p['angle'] as int);
-                    return GestureDetector(
-                      onTap: () => _updateAngle(
-                          (p['angle'] as int).toDouble()),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? const Color(0xFFFA7268)
-                              : Colors.white,
-                          borderRadius: BorderRadius.circular(30),
+                          borderRadius:
+                              BorderRadius.circular(28),
                           border: Border.all(
-                            color: isSelected
-                                ? const Color(0xFFFA7268)
-                                : const Color(0xFFFFD6C4),
-                            width: 1.2,
+                            color: Colors.white,
+                            width: 4,
                           ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              p['label'] as String,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: isSelected
-                                    ? FontWeight.bold
-                                    : FontWeight.w500,
-                                color: isSelected
-                                    ? Colors.white
-                                    : const Color(0xFF7A3E2A),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Icon(
-                              p['icon'] as IconData,
-                              size: 16,
-                              color: isSelected
-                                  ? Colors.white
-                                  : const Color(0xFFFA7268),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _brown.withOpacity(0.18),
+                              blurRadius: 16,
+                              offset: const Offset(0, 8),
                             ),
                           ],
                         ),
+                        child: ClipRRect(
+                          borderRadius:
+                              BorderRadius.circular(24),
+                          child: MjpegView(
+                            uri:
+                               'http://192.168.137.67',
+                            width: double.infinity,
+                            height: 220,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
                       ),
-                    );
-                  }).toList(),
-                ),
 
-                const SizedBox(height: 28),
+                      // "LIVE" badge
+                      Positioned(
+                        top: 14,
+                        left: 14,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.55),
+                            borderRadius:
+                                BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              AnimatedBuilder(
+                                animation: _pulseController,
+                                builder: (context, _) {
+                                  final t = _pulseController.value;
+                                  return Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Color.lerp(
+                                        const Color(0xFFFF5C5C),
+                                        const Color(0xFFFFB4B4),
+                                        t,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'LIVE',
+                                style: GoogleFonts.dmSans(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
 
-                // Status
-                Text(
-                  _status,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF7A3E2A),
-                    fontWeight: FontWeight.w500,
+                      // paw corner sticker
+                      Positioned(
+                        bottom: 12,
+                        right: 12,
+                        child: Container(
+                          padding: const EdgeInsets.all(7),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.85),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.pets,
+                            size: 16,
+                            color: _salmon,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  textAlign: TextAlign.center,
-                ),
 
-                const SizedBox(height: 20),
+                  const SizedBox(height: 18),
 
-                // Refresh
-                TextButton.icon(
-                  onPressed: _fetchCurrentAngle,
-                  icon: const Icon(Icons.refresh,
-                      color: Color(0xFFFA7268)),
-                  label: const Text('Refresh',
-                      style: TextStyle(color: Color(0xFFFA7268))),
-                ),
-              ],
+                  // =========================
+                  // PET DETECTION CARD
+                  // =========================
+
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(9),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.88),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _brownSoft.withOpacity(0.12),
+                          blurRadius: 12,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment:
+                              MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: const BoxDecoration(
+                                color: _blush,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.pets,
+                                color: _salmon,
+                                size: 18,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Pet Detection',
+                              style: GoogleFonts.fraunces(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                                color: _brownSoft,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 14),
+
+                        _buildDetectionPill(),
+
+                        if (_petConfidence > 0) ...[
+                          const SizedBox(height: 14),
+                          _buildConfidenceBar(),
+                        ],
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 26),
+
+                  // =========================
+                  // PORTION SELECTORS
+                  // =========================
+
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Choose a Portion to Feed🥣',
+                      style: GoogleFonts.fraunces(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: _brownSoft,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  Row(
+ children: [
+    _buildPresetChip(
+      label: 'Small',
+      subtext: 'Portion',
+      portion: 'small',
+      icon: Icons.restaurant,
+    ),
+
+    const SizedBox(width: 12),
+
+    _buildPresetChip(
+      label: 'Medium',
+      subtext: 'Portion',
+      portion: 'medium',
+      icon: Icons.set_meal,
+    ),
+
+    const SizedBox(width: 12),
+
+    _buildPresetChip(
+      label: 'Full',
+      subtext: 'Portion',
+      portion: 'full',
+      icon: Icons.dinner_dining,
+    ),
+  ],
+),
+
+                  const SizedBox(height: 28),
+
+                  // =========================
+                  // FEED NOW BUTTON
+                  // =========================
+
+                  SizedBox(
+                    width: double.infinity,
+                    height: 64,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(24),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: _isFeeding
+                              ? [_blush, _blush]
+                              : [_salmon, _peach],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _salmon.withOpacity(0.4),
+                            blurRadius: 18,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: ElevatedButton.icon(
+                        onPressed: _isFeeding ? null : feedNow,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(24),
+                          ),
+                        ),
+                        icon: _isFeeding
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.4,
+                                  color: _salmon,
+                                ),
+                              )
+                            : AnimatedBuilder(
+                                animation: _pawAnimation,
+                                builder: (context, _) {
+                                  return Transform.rotate(
+                                    angle:
+                                        _pawAnimation.value * 0.35,
+                                    child: const Icon(
+                                      Icons.pets,
+                                      size: 26,
+                                    ),
+                                  );
+                                },
+                              ),
+                        label: Text(
+                          _isFeeding ? 'FEEDING...' : 'FEED NOW',
+                          style: GoogleFonts.dmSans(
+                            fontSize: 19,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.1,
+                            color: _isFeeding ? _salmon : Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // =========================
+                  // STATUS
+                  // =========================
+
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
+                      horizontal: 16,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Text(
+                      _status,
+                      style: GoogleFonts.dmSans(
+                        fontSize: 15,
+                        color: _brownSoft,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // =========================
+  // DETECTION PILL (UI helper — reads existing state only)
+  // =========================
+
+  Widget _buildDetectionPill() {
+    late final Color pillColor;
+    late final Color dotColor;
+    late final String label;
+
+    if (_petDetection == 'Yuri') {
+      pillColor = _leafGreen.withOpacity(0.15);
+      dotColor = _leafGreen;
+      label = 'Yuri Detected';
+    } else if (_petDetection == 'Unknown Pet') {
+      pillColor = _amber.withOpacity(0.18);
+      dotColor = _amber;
+      label = 'Unknown Pet';
+    } else {
+      pillColor = Colors.grey.withOpacity(0.15);
+      dotColor = Colors.grey;
+      label = 'No Pet Detected';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        vertical: 10,
+        horizontal: 16,
+      ),
+      decoration: BoxDecoration(
+        color: pillColor,
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: dotColor,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: GoogleFonts.dmSans(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: _brownSoft,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildConfidenceBar() {
+    final pct = _petConfidence.clamp(0.0, 1.0);
+
+    return Column(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: LinearProgressIndicator(
+            value: pct,
+            minHeight: 8,
+            backgroundColor: _blush.withOpacity(0.5),
+            valueColor:
+                const AlwaysStoppedAnimation<Color>(_salmon),
+          ),
         ),
+        const SizedBox(height: 6),
+        Text(
+          '${(_petConfidence * 100).toStringAsFixed(1)}% confidence',
+          style: GoogleFonts.dmSans(
+            fontSize: 12.5,
+            color: _brownSoft.withOpacity(0.75),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // =========================
+  // PRESET CHIP
+  // =========================
+
+  Widget _buildPresetChip({
+  required String label,
+  required String subtext,
+  required String portion,
+  required IconData icon,
+}) {
+  final isSelected = _selectedPortion == portion;
+
+  return Expanded(
+    child: GestureDetector(
+      onTap: _isFeeding
+          ? null
+          : () {
+              setState(() {
+                _selectedPortion = portion;
+              });
+            },
+      child: AnimatedScale(
+        scale: isSelected ? 1.04 : 1.0,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutBack,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(
+            vertical: 16,
+            horizontal: 10,
+          ),
+          decoration: BoxDecoration(
+            gradient: isSelected
+                ? const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      _salmon,
+                      _peach,
+                    ],
+                  )
+                : null,
+            color: isSelected
+                ? null
+                : Colors.white.withOpacity(0.85),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: isSelected
+                  ? Colors.transparent
+                  : _blush,
+              width: 2,
+            ),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: _salmon.withOpacity(0.35),
+                      blurRadius: 12,
+                      offset: const Offset(0, 5),
+                    ),
+                  ]
+                : [],
+          ),
+          child: Column(
+            children: [
+              Icon(
+                icon,
+                color: isSelected
+                    ? Colors.white
+                    : _salmon,
+                size: 26,
+              ),
+
+              const SizedBox(height: 8),
+
+              Text(
+                label,
+                style: GoogleFonts.dmSans(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: isSelected
+                      ? Colors.white
+                      : _brownSoft,
+                ),
+              ),
+
+              const SizedBox(height: 2),
+
+              Text(
+                subtext,
+                style: GoogleFonts.dmSans(
+                  fontSize: 11.5,
+                  color: isSelected
+                      ? Colors.white70
+                      : _brownSoft.withOpacity(0.7),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+}
+
+// =========================
+// SMALL DECORATIVE WIDGETS (UI only — no state/logic)
+// =========================
+
+class _PawBadge extends StatelessWidget {
+  const _PawBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            _ServoPageState._salmon,
+            _ServoPageState._peach,
+          ],
+        ),
+      ),
+      child: const Icon(
+        Icons.pets,
+        size: 20,
+        color: Colors.white,
       ),
     );
   }
 }
 
-class PetServoPainter extends CustomPainter {
+class _GhostPaw extends StatelessWidget {
+  final double size;
   final double angle;
-  final Color color;
 
-  const PetServoPainter({required this.angle, required this.color});
+  const _GhostPaw({required this.size, required this.angle});
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final cy = size.height * 0.7;
-
-    final bodyRect = RRect.fromRectAndRadius(
-      Rect.fromCenter(
-          center: Offset(cx, cy + 12), width: 68, height: 42),
-      const Radius.circular(20),
+  Widget build(BuildContext context) {
+    return Transform.rotate(
+      angle: angle,
+      child: Icon(
+        Icons.pets,
+        size: size,
+        color: Colors.white.withOpacity(0.18),
+      ),
     );
-
-    final bodyPaint = Paint()..color = color.withOpacity(0.15);
-    final borderPaint = Paint()
-      ..color = color.withOpacity(0.3)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-
-    canvas.drawRRect(bodyRect, bodyPaint);
-    canvas.drawRRect(bodyRect, borderPaint);
-
-    final rad = (angle - 90) * pi / 180;
-    final armEnd =
-        Offset(cx + 50 * sin(rad), cy - 50 * cos(rad));
-
-    canvas.drawLine(
-      Offset(cx, cy),
-      armEnd,
-      Paint()
-        ..color = color
-        ..strokeWidth = 5
-        ..strokeCap = StrokeCap.round,
-    );
-
-    canvas.drawCircle(
-        armEnd, 7, Paint()..color = color.withOpacity(0.85));
-    canvas.drawCircle(armEnd, 4, Paint()..color = Colors.white);
   }
-
-  @override
-  bool shouldRepaint(PetServoPainter old) => old.angle != angle;
 }

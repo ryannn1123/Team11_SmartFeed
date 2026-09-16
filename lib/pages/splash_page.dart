@@ -148,48 +148,54 @@ class _SplashPageState extends State<SplashPage>
         child: FadeTransition(
           opacity: _fadeAnim,
           child: SafeArea(
-            child: Stack(
-              children: [
-                ..._buildPetBubbles(size, data),
+            
+child: Stack(
+  children: [
+    ..._buildPetBubbles(size, data),
 
-                Positioned(
-                  top: 18,
-                  left: 22,
-                  right: 22,
-                  child: _TopBar(
-                    accentColor: data.accentColor,
-                    onSkip: _skip,
-                  ),
-                ),
+    // Page content
+    PageView.builder(
+      controller: _pageController,
+      itemCount: _pages.length,
+      onPageChanged: (index) {
+        setState(() => _currentPage = index);
+      },
+      itemBuilder: (context, index) {
+        return _SplashContent(
+          data: _pages[index],
+          size: size,
+          floatAnim: _floatAnim,
+        );
+      },
+    ),
 
-                PageView.builder(
-                  controller: _pageController,
-                  itemCount: _pages.length,
-                  onPageChanged: (index) {
-                    setState(() => _currentPage = index);
-                  },
-                  itemBuilder: (context, index) {
-                    return _SplashContent(
-                      data: _pages[index],
-                      size: size,
-                      floatAnim: _floatAnim,
-                    );
-                  },
-                ),
+    // TOP BAR - placed AFTER PageView so Skip receives taps
+    Positioned(
+      top: 18,
+      left: 22,
+      right: 22,
+      child: _TopBar(
+        accentColor: data.accentColor,
+        onSkip: _skip,
+      ),
+    ),
 
-                Positioned(
-                  left: 22,
-                  right: 22,
-                  bottom: 24,
-                  child: _BottomPetCard(
-                    data: data,
-                    currentPage: _currentPage,
-                    totalPages: _pages.length,
-                    onNext: _nextPage,
-                  ),
-                ),
-              ],
-            ),
+    // Bottom card
+    Positioned(
+      left: 22,
+      right: 22,
+      bottom: 24,
+      child: _BottomPetCard(
+        data: data,
+        currentPage: _currentPage,
+        totalPages: _pages.length,
+        onNext: _nextPage,
+      ),
+    ),
+  ],
+),
+
+
           ),
         ),
       ),

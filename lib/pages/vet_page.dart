@@ -1,6 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+// =========================
+// SHARED PALETTE
+// (matches servo_page.dart / schedule_page.dart / history_page.dart)
+// =========================
+
+class _Palette {
+  static const Color salmon = Color(0xFFFA7268);
+  static const Color peach = Color(0xFFFF9E89);
+  static const Color blush = Color(0xFFFFD6C4);
+  static const Color cream = Color(0xFFFFEFC4);
+  static const Color brown = Color(0xFF5B3A29);
+  static const Color brownSoft = Color(0xFF7A3E2A);
+  static const Color amber = Color(0xFFE0A438);
+}
 
 class VetPage extends StatefulWidget {
   const VetPage({super.key});
@@ -12,50 +28,64 @@ class VetPage extends StatefulWidget {
 class _VetPageState extends State<VetPage> {
   Position? _position;
   bool _loadingLocation = false;
-  String _locationStatus = 'Tap "Use GPS" to find nearest clinics';
+
+  String _locationStatus =
+      'Tap "Use GPS" to find nearest clinics';
+
+  // ============================================================
+  // VETERINARY CLINICS
+  // Coordinates verified against Google Maps listings for
+  // accurate nearest-clinic sorting.
+  // ============================================================
 
   static const List<Map<String, dynamic>> _clinics = [
     {
       'name': 'Cebu Northside Veterinary Clinic',
-      'address': 'Door 4, Brgy, Bogo MGF Franz Bldg, Gairan, Bogo City, 6010 Cebu',
+      'address':
+          'Door 4, Brgy, Bogo MGF Franz Bldg, Gairan, Bogo City, 6010 Cebu',
       'phone': '09674592737',
-      'hours': 'Mon-Fri: 8AM - 5PM',
+      'hours': 'Mon-Sat: 9AM - 6PM',
       'type': 'Private',
-      'color': Color(0xFFFF9E89),
-      'lat': 11.0509,
-      'lng': 124.0054,
+      'color': _Palette.salmon,
+
+      // Verified coordinate (Google Maps listing)
+      'lat': 11.0524383,
+      'lng': 124.0116599,
     },
+
     {
       'name': 'David Shepherd Veterinary Services',
-      'address': 'A.Mansueto St, Lourdes, Bogo City, 6010 Cebu',
+      'address':
+          'A.Mansueto St, Lourdes, Bogo City, 6010 Cebu',
       'phone': '09661456014',
       'hours': 'Mon-Sat: 9AM - 6PM',
       'type': 'Private',
-      'color': Color(0xFFFFBFA3),
-      'lat': 11.0515,
-      'lng': 124.0060,
+      'color': _Palette.peach,
+
+      // Verified coordinate (Google Maps listing)
+      'lat': 11.0503442,
+      'lng': 124.0065866,
     },
+
     {
       'name': 'Bogo Claws and Paws Animal Clinic',
-      'address': '3225+M7X, Bogo City, Cebu',
+      'address':
+          '3225+M7X, Bogo City, Cebu',
       'phone': '(032) 406 0505',
       'hours': 'Daily: 8AM - 8PM',
       'type': 'Private',
-      'color': Color(0xFFFFD4A8),
-      'lat': 11.0520,
-      'lng': 124.0048,
+      'color': _Palette.amber,
+
+      // Verified coordinate (Google Maps listing)
+      'lat': 11.0517469,
+      'lng': 124.00823,
     },
-    {
-      'name': 'Happy Paws Vet Clinic',
-      'address': 'Carbon Market Area, Bogo City, Cebu',
-      'phone': '0935-789-0123',
-      'hours': 'Mon-Sat: 8AM - 7PM',
-      'type': 'Private',
-      'color': Color(0xFFFFEFC4),
-      'lat': 11.0500,
-      'lng': 124.0065,
-    },
+
   ];
+
+  // ============================================================
+  // GET USER LOCATION
+  // ============================================================
 
   Future<void> _getLocation() async {
     setState(() {
@@ -64,371 +94,964 @@ class _VetPageState extends State<VetPage> {
     });
 
     try {
-      LocationPermission permission = await Geolocator.checkPermission();
+      // Check whether location service is enabled
+      bool serviceEnabled =
+          await Geolocator.isLocationServiceEnabled();
+
+      if (!serviceEnabled) {
+        setState(() {
+          _locationStatus =
+              'Please turn on Location/GPS on your phone';
+          _loadingLocation = false;
+        });
+        return;
+      }
+
+      // Check permission
+      LocationPermission permission =
+          await Geolocator.checkPermission();
+
       if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
+        permission =
+            await Geolocator.requestPermission();
+
         if (permission == LocationPermission.denied) {
           setState(() {
-            _locationStatus = 'Location permission denied';
+            _locationStatus =
+                'Location permission denied';
             _loadingLocation = false;
           });
           return;
         }
       }
 
-      if (permission == LocationPermission.deniedForever) {
+      if (permission ==
+          LocationPermission.deniedForever) {
         setState(() {
-          _locationStatus = 'Enable location in phone settings';
+          _locationStatus =
+              'Enable location permission in phone settings';
           _loadingLocation = false;
         });
         return;
       }
 
-      final position = await Geolocator.getCurrentPosition(
+      // Get current position
+      final position =
+          await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
       setState(() {
         _position = position;
-        _locationStatus = 'Showing nearest clinics first';
+        _locationStatus =
+            'Showing nearest clinics first';
         _loadingLocation = false;
       });
     } catch (e) {
       setState(() {
-        _locationStatus = 'Could not get location';
+        _locationStatus =
+            'Could not get your location';
         _loadingLocation = false;
       });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Location error: $e',
+          ),
+        ),
+      );
     }
   }
 
+  // ============================================================
+  // CALCULATE DISTANCE
+  // ============================================================
+
   double _getDistance(Map<String, dynamic> clinic) {
-    if (_position == null) return 0;
-    return Geolocator.distanceBetween(
-          _position!.latitude,
-          _position!.longitude,
-          clinic['lat'] as double,
-          clinic['lng'] as double,
-        ) /
-        1000;
+  if (_position == null) {
+    return 0.0;
   }
 
-  List<Map<String, dynamic>> get _sortedClinics {
-    if (_position == null) return _clinics;
-    final sorted = List<Map<String, dynamic>>.from(_clinics);
-    sorted.sort((a, b) => _getDistance(a).compareTo(_getDistance(b)));
+  final double clinicLat =
+      double.parse(clinic['lat'].toString());
+
+  final double clinicLng =
+      double.parse(clinic['lng'].toString());
+
+  final double distanceMeters =
+      Geolocator.distanceBetween(
+    _position!.latitude,
+    _position!.longitude,
+    clinicLat,
+    clinicLng,
+  );
+
+  return distanceMeters / 1000.0;
+}
+
+  // ============================================================
+  // SORT CLINICS BY DISTANCE
+  // ============================================================
+
+  List<Map<String, dynamic>>
+      get _sortedClinics {
+    if (_position == null) {
+      return _clinics;
+    }
+
+    final sorted =
+        List<Map<String, dynamic>>.from(
+      _clinics,
+    );
+
+    sorted.sort(
+      (a, b) =>
+          _getDistance(a).compareTo(
+        _getDistance(b),
+      ),
+    );
+
     return sorted;
   }
 
-  void _openMaps(Map<String, dynamic> clinic) async {
-    final lat = clinic['lat'] as double;
-    final lng = clinic['lng'] as double;
-    final name = Uri.encodeComponent(clinic['name'] as String);
-    final url = Uri.parse(
-        'https://www.google.com/maps/search/?api=1&query=$name&center=$lat,$lng');
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
+  // ============================================================
+  // OPEN GOOGLE MAPS DIRECTIONS
+  // ============================================================
+
+  Future<void> _openMaps(Map<String, dynamic> clinic) async {
+  final double lat =
+      double.parse(clinic['lat'].toString());
+
+  final double lng =
+      double.parse(clinic['lng'].toString());
+
+  final String clinicName =
+      clinic['name'].toString();
+
+  // Google Maps Directions URL
+  //
+  // The user's current location will be used
+  // as the starting point.
+  final Uri url = Uri.https(
+    'www.google.com',
+    '/maps/dir/',
+    {
+      'api': '1',
+      'destination': '$lat,$lng',
+      'travelmode': 'driving',
+    },
+  );
+
+  try {
+    await launchUrl(
+      url,
+      mode: LaunchMode.externalApplication,
+    );
+  } catch (e) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Could not open directions for $clinicName',
+        ),
+      ),
+    );
+
+    debugPrint('Google Maps error: $e');
+  }
+}
+
+  // ============================================================
+  // CALL CLINIC
+  // ============================================================
+
+  Future<void> _callClinic(
+      String phone) async {
+    final cleaned =
+        phone.replaceAll(
+      RegExp(r'[^\d+]'),
+      '',
+    );
+
+    final Uri url =
+        Uri.parse('tel:$cleaned');
+
+    try {
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url);
+      } else {
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context)
+            .showSnackBar(
+          const SnackBar(
+            content:
+                Text('Could not make the call'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          content:
+              Text('Error making call: $e'),
+        ),
+      );
     }
   }
 
-  void _callClinic(String phone) async {
-    final cleaned = phone.replaceAll(RegExp(r'[^\d+]'), '');
-    final url = Uri.parse('tel:$cleaned');
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url);
-    }
-  }
+  // ============================================================
+  // BUILD UI
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
     final clinics = _sortedClinics;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFF7F0),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFFFF9E89),
-        elevation: 0,
-        centerTitle: true,
-        title: const Text(
-          'Vet Clinics',
-          style: TextStyle(
-            color: Color(0xFF5B3A29),
-            fontWeight: FontWeight.w900,
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              _Palette.peach,
+              Color(0xFFFFBFA3),
+              Color(0xFFFFD8A0),
+              _Palette.cream,
+            ],
           ),
         ),
-      ),
-      body: Column(
-        children: [
-          // GPS Banner
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            margin: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [
-                  Color(0xFFFF9E89),
-                  Color(0xFFFFBFA3),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  _position != null
-                      ? Icons.location_on
-                      : Icons.location_searching,
-                  color: Colors.white,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _locationStatus,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
+        child: SafeArea(
+          child: Column(
+            children: [
+
+              // ======================================================
+              // HEADER
+              // ======================================================
+
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [_Palette.salmon, _Palette.peach],
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.health_and_safety_rounded,
+                        color: Colors.white,
+                        size: 17,
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Vet Clinics',
+                      style: GoogleFonts.fraunces(
+                        color: _Palette.brownSoft,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
-                _loadingLocation
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : TextButton(
-                        onPressed: _getLocation,
-                        child: Text(
-                          _position != null ? 'Refresh' : 'Use GPS',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-              ],
-            ),
-          ),
+              ),
 
-          // Clinics List
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-              itemCount: clinics.length,
-              itemBuilder: (context, index) {
-                final clinic = clinics[index];
-                final distance =
-                    _position != null ? _getDistance(clinic) : null;
-                final color = clinic['color'] as Color;
-                final phone = clinic['phone'] as String;
+              // ======================================================
+              // GPS BANNER
+              // ======================================================
 
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: color.withOpacity(0.5)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+
+                margin:
+                    const EdgeInsets.all(16),
+
+                decoration:
+                    BoxDecoration(
+                  gradient:
+                      const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      _Palette.salmon,
+                      _Palette.peach,
                     ],
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Header
-                        Row(
-                          children: [
-                            Container(
-                              width: 48,
-                              height: 48,
-                              decoration: BoxDecoration(
-                                color: color.withOpacity(0.25),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Icon(Icons.local_hospital,
-                                  color: color.darken(0.15), size: 24),
+
+                  borderRadius:
+                      BorderRadius.circular(20),
+
+                  boxShadow: [
+                    BoxShadow(
+                      color: _Palette.salmon.withOpacity(0.35),
+                      blurRadius: 14,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+
+                child: Row(
+                  children: [
+
+                    Icon(
+                      _position != null
+                          ? Icons.location_on
+                          : Icons.location_searching,
+
+                      color: Colors.white,
+                      size: 20,
+                    ),
+
+                    const SizedBox(width: 8),
+
+                    Expanded(
+                      child: Text(
+                        _locationStatus,
+
+                        style:
+                            GoogleFonts.dmSans(
+                          fontSize: 14,
+                          color: Colors.white,
+                          fontWeight:
+                              FontWeight.w600,
+                        ),
+                      ),
+                    ),
+
+                    _loadingLocation
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+
+                            child:
+                                CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    clinic['name'] as String,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 15,
-                                      color: Color(0xFF5B3A29),
+                          )
+
+                        : TextButton(
+                            onPressed:
+                                _getLocation,
+
+                            child: Text(
+                              _position != null
+                                  ? 'Refresh'
+                                  : 'Use GPS',
+
+                              style:
+                                  GoogleFonts.dmSans(
+                                color: Colors.white,
+                                fontWeight:
+                                    FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                  ],
+                ),
+              ),
+
+              // ======================================================
+              // CLINICS LIST
+              // ======================================================
+
+              Expanded(
+                child:
+                    ListView.builder(
+                  padding:
+                      const EdgeInsets.fromLTRB(
+                    16,
+                    0,
+                    16,
+                    100,
+                  ),
+
+                  itemCount:
+                      clinics.length,
+
+                  itemBuilder:
+                      (context, index) {
+
+                    final clinic =
+                        clinics[index];
+
+                    final distance =
+                        _position != null
+                            ? _getDistance(
+                                clinic)
+                            : null;
+
+                    final color =
+                        clinic['color']
+                            as Color;
+
+                    final phone =
+                        clinic['phone']
+                            as String;
+
+                    final isClosest =
+                        distance != null && index == 0;
+
+                    return Container(
+                      margin:
+                          const EdgeInsets.only(
+                        bottom: 16,
+                      ),
+
+                      decoration:
+                          BoxDecoration(
+                        color: Colors.white.withOpacity(0.94),
+
+                        borderRadius:
+                            BorderRadius.circular(
+                          22,
+                        ),
+
+                        border:
+                            Border.all(
+                          color: isClosest
+                              ? color
+                              : color
+                                  .withOpacity(0.4),
+                          width: isClosest ? 2 : 1,
+                        ),
+
+                        boxShadow: [
+                          BoxShadow(
+                            color: _Palette.brownSoft
+                                .withOpacity(
+                              0.1,
+                            ),
+
+                            blurRadius: 16,
+
+                            offset:
+                                const Offset(
+                              0,
+                              6,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      child: Padding(
+                        padding:
+                            const EdgeInsets.all(
+                          16,
+                        ),
+
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment
+                                  .start,
+
+                          children: [
+
+                            // ========================================
+                            // CLINIC HEADER
+                            // ========================================
+
+                            Row(
+                              children: [
+
+                                Container(
+                                  width: 48,
+                                  height: 48,
+
+                                  decoration:
+                                      BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                      colors: [
+                                        color,
+                                        color.withOpacity(0.7),
+                                      ],
+                                    ),
+
+                                    borderRadius:
+                                        BorderRadius
+                                            .circular(
+                                      14,
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Row(
+
+                                  child: const Icon(
+                                    Icons
+                                        .pets,
+
+                                    color: Colors.white,
+
+                                    size: 24,
+                                  ),
+                                ),
+
+                                const SizedBox(
+                                  width: 12,
+                                ),
+
+                                Expanded(
+                                  child:
+                                      Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment
+                                            .start,
+
                                     children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: color.withOpacity(0.3),
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                        ),
-                                        child: Text(
-                                          clinic['type'] as String,
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: color.darken(0.2),
-                                            fontWeight: FontWeight.w600,
-                                          ),
+
+                                      Text(
+                                        clinic['name']
+                                            as String,
+
+                                        style:
+                                            GoogleFonts.fraunces(
+                                          fontWeight:
+                                              FontWeight
+                                                  .w700,
+
+                                          fontSize:
+                                              15,
+
+                                          color: _Palette.brown,
                                         ),
                                       ),
-                                      if (distance != null) ...[
-                                        const SizedBox(width: 6),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFFFFEFC4),
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                          ),
-                                          child: Text(
-                                            '${distance.toStringAsFixed(1)} km',
-                                            style: const TextStyle(
-                                              fontSize: 11,
-                                              color: Color(0xFF5B3A29),
-                                              fontWeight: FontWeight.w600,
+
+                                      const SizedBox(
+                                        height: 6,
+                                      ),
+
+                                      Wrap(
+                                        crossAxisAlignment: WrapCrossAlignment.center,
+                                        spacing: 6,
+                                        runSpacing: 4,
+                                        children: [
+
+                                          Container(
+                                            padding:
+                                                const EdgeInsets
+                                                    .symmetric(
+                                              horizontal:
+                                                  8,
+                                              vertical:
+                                                  3,
+                                            ),
+
+                                            decoration:
+                                                BoxDecoration(
+                                              color: color
+                                                  .withOpacity(
+                                                0.18,
+                                              ),
+
+                                              borderRadius:
+                                                  BorderRadius
+                                                      .circular(
+                                                8,
+                                              ),
+                                            ),
+
+                                            child:
+                                                Text(
+                                              clinic['type']
+                                                  as String,
+
+                                              style:
+                                                  GoogleFonts.dmSans(
+                                                fontSize:
+                                                    11,
+
+                                                color:
+                                                    _Palette.brownSoft,
+
+                                                fontWeight:
+                                                    FontWeight
+                                                        .w600,
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                      ],
+
+                                          if (distance !=
+                                              null)
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets
+                                                      .symmetric(
+                                                horizontal:
+                                                    8,
+                                                vertical:
+                                                    3,
+                                              ),
+
+                                              decoration:
+                                                  BoxDecoration(
+                                                color: _Palette.cream,
+
+                                                borderRadius:
+                                                    BorderRadius
+                                                        .circular(
+                                                  8,
+                                                ),
+                                              ),
+
+                                              child:
+                                                  Text(
+                                                '${distance.toStringAsFixed(1)} km',
+
+                                                style:
+                                                    GoogleFonts.dmSans(
+                                                  fontSize:
+                                                      11,
+
+                                                  color: _Palette.brownSoft,
+
+                                                  fontWeight:
+                                                      FontWeight
+                                                          .w600,
+                                                ),
+                                              ),
+                                            ),
+
+                                          if (isClosest)
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets
+                                                      .symmetric(
+                                                horizontal: 8,
+                                                vertical: 3,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                gradient: const LinearGradient(
+                                                  colors: [_Palette.salmon, _Palette.peach],
+                                                ),
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Icon(Icons.pets, size: 10, color: Colors.white),
+                                                  const SizedBox(width: 3),
+                                                  Text(
+                                                    'Closest',
+                                                    style: GoogleFonts.dmSans(
+                                                      fontSize: 11,
+                                                      color: Colors.white,
+                                                      fontWeight: FontWeight.w700,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                        ],
+                                      ),
                                     ],
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(
+                              height: 14,
+                            ),
+
+                            // ========================================
+                            // ADDRESS
+                            // ========================================
+
+                            Row(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment
+                                      .start,
+
+                              children: [
+
+                                Icon(
+                                  Icons
+                                      .location_on,
+
+                                  size: 16,
+
+                                  color:
+                                      _Palette.brownSoft.withOpacity(0.55),
+                                ),
+
+                                const SizedBox(
+                                  width: 6,
+                                ),
+
+                                Expanded(
+                                  child: Text(
+                                    clinic['address']
+                                        as String,
+
+                                    style:
+                                        GoogleFonts.dmSans(
+                                      fontSize:
+                                          13,
+
+                                      color:
+                                          _Palette.brownSoft.withOpacity(0.75),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(
+                              height: 6,
+                            ),
+
+                            // ========================================
+                            // PHONE
+                            // ========================================
+
+                            if (phone.isNotEmpty) ...[
+                              Row(
+                                children: [
+
+                                  Icon(
+                                    Icons.phone,
+
+                                    size: 16,
+
+                                    color:
+                                        _Palette.brownSoft.withOpacity(0.55),
+                                  ),
+
+                                  const SizedBox(
+                                    width: 6,
+                                  ),
+
+                                  Text(
+                                    phone,
+
+                                    style:
+                                        GoogleFonts.dmSans(
+                                      fontSize:
+                                          13,
+
+                                      color:
+                                          _Palette.brownSoft.withOpacity(0.75),
+                                    ),
                                   ),
                                 ],
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
 
-                        // Address
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(Icons.location_on,
-                                size: 16, color: Colors.brown[400]),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                clinic['address'] as String,
-                                style: TextStyle(
-                                    fontSize: 13, color: Colors.brown[600]),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-
-                        // Phone
-                        if (phone.isNotEmpty) ...[
-                          Row(
-                            children: [
-                              Icon(Icons.phone,
-                                  size: 16, color: Colors.brown[400]),
-                              const SizedBox(width: 6),
-                              Text(
-                                phone,
-                                style: TextStyle(
-                                    fontSize: 13, color: Colors.brown[600]),
+                              const SizedBox(
+                                height: 6,
                               ),
                             ],
-                          ),
-                          const SizedBox(height: 6),
-                        ],
 
-                        // Hours
-                        Row(
-                          children: [
-                            Icon(Icons.access_time,
-                                size: 16, color: Colors.brown[400]),
-                            const SizedBox(width: 6),
-                            Text(
-                              clinic['hours'] as String,
-                              style: TextStyle(
-                                  fontSize: 13, color: Colors.brown[600]),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
+                            // ========================================
+                            // HOURS
+                            // ========================================
 
-                        // Buttons
-                        Row(
-                          children: [
-                            if (phone.isNotEmpty)
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: () => _callClinic(phone),
-                                  icon: Icon(Icons.phone,
-                                      size: 16, color: color.darken(0.2)),
-                                  label: Text(
-                                    'Call',
-                                    style:
-                                        TextStyle(color: color.darken(0.2)),
+                            Row(
+                              children: [
+
+                                Icon(
+                                  Icons.access_time,
+
+                                  size: 16,
+
+                                  color:
+                                      _Palette.brownSoft.withOpacity(0.55),
+                                ),
+
+                                const SizedBox(
+                                  width: 6,
+                                ),
+
+                                Text(
+                                  clinic['hours']
+                                      as String,
+
+                                  style:
+                                      GoogleFonts.dmSans(
+                                    fontSize:
+                                        13,
+
+                                    color:
+                                        _Palette.brownSoft.withOpacity(0.75),
                                   ),
-                                  style: OutlinedButton.styleFrom(
-                                    side: BorderSide(
-                                        color: color.darken(0.1)),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(10),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(
+                              height: 16,
+                            ),
+
+                            // ========================================
+                            // BUTTONS
+                            // ========================================
+
+                            Row(
+                              children: [
+
+                                // CALL BUTTON
+                                if (phone.isNotEmpty)
+                                  Expanded(
+                                    child:
+                                        OutlinedButton
+                                            .icon(
+                                      onPressed:
+                                          () =>
+                                              _callClinic(
+                                        phone,
+                                      ),
+
+                                      icon:
+                                          Icon(
+                                        Icons.phone,
+
+                                        size:
+                                            16,
+
+                                        color:
+                                            color.darken(
+                                          0.2,
+                                        ),
+                                      ),
+
+                                      label:
+                                          Text(
+                                        'Call',
+
+                                        style:
+                                            GoogleFonts.dmSans(
+                                          fontWeight: FontWeight.w700,
+                                          color:
+                                              color.darken(
+                                            0.2,
+                                          ),
+                                        ),
+                                      ),
+
+                                      style:
+                                          OutlinedButton
+                                              .styleFrom(
+                                        side:
+                                            BorderSide(
+                                          color:
+                                              color.darken(
+                                            0.1,
+                                          ),
+                                        ),
+
+                                        shape:
+                                            RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius
+                                                  .circular(
+                                            14,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                if (phone.isNotEmpty)
+                                  const SizedBox(
+                                    width: 10,
+                                  ),
+
+                                // DIRECTIONS BUTTON
+                                Expanded(
+                                  child:
+                                      FilledButton
+                                          .icon(
+                                    onPressed:
+                                        () =>
+                                            _openMaps(
+                                      clinic,
+                                    ),
+
+                                    icon:
+                                        const Icon(
+                                      Icons.directions,
+                                      size: 16,
+                                    ),
+
+                                    label:
+                                        Text(
+                                      'Directions',
+                                      style: GoogleFonts.dmSans(fontWeight: FontWeight.w700),
+                                    ),
+
+                                    style:
+                                        FilledButton
+                                            .styleFrom(
+                                      backgroundColor:
+                                          color,
+
+                                      foregroundColor:
+                                          Colors.white,
+
+                                      shape:
+                                          RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius
+                                                .circular(
+                                          14,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            if (phone.isNotEmpty) const SizedBox(width: 10),
-                            Expanded(
-                              child: FilledButton.icon(
-                                onPressed: () => _openMaps(clinic),
-                                icon: const Icon(Icons.directions, size: 16),
-                                label: const Text('Directions'),
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: color.darken(0.05),
-                                  foregroundColor: const Color(0xFF5B3A29),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
-                              ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
+// ================================================================
+// COLOR DARKEN EXTENSION
+// ================================================================
+
 extension ColorBrightness on Color {
-  Color darken([double amount = .1]) {
-    final hsl = HSLColor.fromColor(this);
+  Color darken([
+    double amount = .1,
+  ]) {
+    final hsl =
+        HSLColor.fromColor(this);
+
     final hslDark =
-        hsl.withLightness((hsl.lightness - amount).clamp(0.0, 1.0));
+        hsl.withLightness(
+      (hsl.lightness - amount)
+          .clamp(0.0, 1.0),
+    );
+
     return hslDark.toColor();
   }
 }
